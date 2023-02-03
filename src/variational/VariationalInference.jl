@@ -21,13 +21,15 @@ export
 
 """
     make_logjoint(model::Model; weight = 1.0)
+
 Constructs the logjoint as a function of latent variables, i.e. the map z → p(x ∣ z) p(z).
 The weight used to scale the likelihood, e.g. when doing stochastic gradient descent one needs to
 use `DynamicPPL.MiniBatch` context to run the `Model` with a weight `num_total_obs / batch_size`.
-## Notes
+
+# Notes
 - For sake of efficiency, the returned function is closes over an instance of `VarInfo`. This means that you *might* run into some weird behaviour if you call this method sequentially using different types; if that's the case, just generate a new one for each type using `make_logjoint`.
 """
-function make_logjoint(model::DynamicPPL.Model; weight = 1.0)
+function make_logjoint(model::DynamicPPL.Model, weight = 1.0)
     # setup
     ctx = DynamicPPL.MiniBatchContext(
         DynamicPPL.DefaultContext(),
@@ -35,23 +37,10 @@ function make_logjoint(model::DynamicPPL.Model; weight = 1.0)
     )
     varinfo_init = DynamicPPL.VarInfo(model, ctx)
 
-    function logπ(z)
-        varinfo = DynamicPPL.VarInfo(varinfo_init, DynamicPPL.SampleFromUniform(), z)
-        model(varinfo)
-
-        return DynamicPPL.getlogp(varinfo)
-    end
-
-    return logπ
+    f = DynamicPPL.LogDensityFunction(varinfo_init, model, ctx)
+    # TODO: Make use of `ADgradient` here instead.
+    return Base.Fix1(LogDensityProblems.logdensity, f)
 end
-
-function logjoint(model::DynamicPPL.Model, varinfo, z)
-    varinfo = DynamicPPL.VarInfo(varinfo, DynamicPPL.SampleFromUniform(), z)
-    model(varinfo)
-
-    return DynamicPPL.getlogp(varinfo)
-end
-
 
 # objectives
 function (elbo::ELBO)(
@@ -63,7 +52,7 @@ function (elbo::ELBO)(
     weight = 1.0,
     kwargs...
 )
-    return elbo(rng, alg, q, make_logjoint(model; weight = weight), num_samples; kwargs...)
+    return elbo(rng, alg, q, make_logjoint(model, weight), num_samples; kwargs...)
 end
 
 # VI algorithms
